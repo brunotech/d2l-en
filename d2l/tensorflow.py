@@ -1,4 +1,4 @@
-DATA_HUB = dict()
+DATA_HUB = {}
 DATA_URL = 'http://d2l-data.s3-accelerate.amazonaws.com/'
 
 import numpy as np
@@ -148,7 +148,7 @@ class ProgressBoard(d2l.HyperParameters):
             plt_lines.append(d2l.plt.plot([p.x for p in v], [p.y for p in v],
                                           linestyle=ls, color=color)[0])
             labels.append(k)
-        axes = self.axes if self.axes else d2l.plt.gca()
+        axes = self.axes or d2l.plt.gca()
         if self.xlim: axes.set_xlim(self.xlim)
         if self.ylim: axes.set_ylim(self.ylim)
         if not self.xlabel: self.xlabel = self.x
@@ -460,9 +460,7 @@ def try_gpu(i=0):
     """Return gpu(i) if exists, otherwise return cpu().
 
     Defined in :numref:`sec_use_gpu`"""
-    if num_gpus() >= i + 1:
-        return gpu(i)
-    return cpu()
+    return gpu(i) if num_gpus() >= i + 1 else cpu()
 
 def try_all_gpus():
     """Return all available GPUs, or [cpu(),] if no GPU exists.
@@ -562,8 +560,12 @@ class TimeMachine(d2l.DataModule):
         super(d2l.TimeMachine, self).__init__()
         self.save_hyperparameters()
         corpus, self.vocab = self.build(self._download())
-        array = d2l.tensor([corpus[i:i+num_steps+1]
-                            for i in range(0, len(corpus)-num_steps-1)])
+        array = d2l.tensor(
+            [
+                corpus[i : i + num_steps + 1]
+                for i in range(len(corpus) - num_steps - 1)
+            ]
+        )
         self.X, self.Y = array[:,:-1], array[:,1:]
 
     def get_dataloader(self, train):
@@ -593,9 +595,11 @@ class Vocab:
         return len(self.idx_to_token)
 
     def __getitem__(self, tokens):
-        if not isinstance(tokens, (list, tuple)):
-            return self.token_to_idx.get(tokens, self.unk)
-        return [self.__getitem__(token) for token in tokens]
+        return (
+            [self.__getitem__(token) for token in tokens]
+            if isinstance(tokens, (list, tuple))
+            else self.token_to_idx.get(tokens, self.unk)
+        )
 
     def to_tokens(self, indices):
         if hasattr(indices, '__len__') and len(indices) > 1:
@@ -970,18 +974,17 @@ def masked_softmax(X, valid_lens):
 
     if valid_lens is None:
         return tf.nn.softmax(X, axis=-1)
-    else:
-        shape = X.shape
-        if len(valid_lens.shape) == 1:
-            valid_lens = tf.repeat(valid_lens, repeats=shape[1])
-
-        else:
-            valid_lens = tf.reshape(valid_lens, shape=-1)
-        # On the last axis, replace masked elements with a very large negative
-        # value, whose exponentiation outputs 0
-        X = _sequence_mask(tf.reshape(X, shape=(-1, shape[-1])), valid_lens,
-                           value=-1e6)
-        return tf.nn.softmax(tf.reshape(X, shape=shape), axis=-1)
+    shape = X.shape
+    valid_lens = (
+        tf.repeat(valid_lens, repeats=shape[1])
+        if len(valid_lens.shape) == 1
+        else tf.reshape(valid_lens, shape=-1)
+    )
+    # On the last axis, replace masked elements with a very large negative
+    # value, whose exponentiation outputs 0
+    X = _sequence_mask(tf.reshape(X, shape=(-1, shape[-1])), valid_lens,
+                       value=-1e6)
+    return tf.nn.softmax(tf.reshape(X, shape=shape), axis=-1)
 
 class AdditiveAttention(tf.keras.layers.Layer):
     """Additive attention.
@@ -1654,10 +1657,10 @@ def download(url, folder='../data', sha1_hash=None):
         sha1 = hashlib.sha1()
         with open(fname, 'rb') as f:
             while True:
-                data = f.read(1048576)
-                if not data:
+                if data := f.read(1048576):
+                    sha1.update(data)
+                else:
                     break
-                sha1.update(data)
         if sha1.hexdigest() == sha1_hash:
             return fname
     # Download
@@ -1847,8 +1850,7 @@ class MaskedSoftmaxCELoss(tf.keras.losses.Loss):
         label_one_hot = tf.one_hot(label, depth=pred.shape[-1])
         unweighted_loss = tf.keras.losses.CategoricalCrossentropy(
             from_logits=True, reduction='none')(label_one_hot, pred)
-        weighted_loss = tf.reduce_mean((unweighted_loss*weights), axis=1)
-        return weighted_loss
+        return tf.reduce_mean((unweighted_loss*weights), axis=1)
 
 def train_seq2seq(net, data_iter, lr, num_epochs, tgt_vocab, device):
     """Train a model for sequence to sequence.
@@ -1861,7 +1863,7 @@ def train_seq2seq(net, data_iter, lr, num_epochs, tgt_vocab, device):
         timer = d2l.Timer()
         metric = d2l.Accumulator(2)  # Sum of training loss, no. of tokens
         for batch in data_iter:
-            X, X_valid_len, Y, Y_valid_len = [x for x in batch]
+            X, X_valid_len, Y, Y_valid_len = list(batch)
             bos = tf.reshape(tf.constant([tgt_vocab['<bos>']] * Y.shape[0]),
                              shape=(-1, 1))
             dec_input = tf.concat([bos, Y[:, :-1]], 1)  # Teacher forcing

@@ -1,4 +1,4 @@
-DATA_HUB = dict()
+DATA_HUB = {}
 DATA_URL = 'http://d2l-data.s3-accelerate.amazonaws.com/'
 
 import numpy as np
@@ -160,7 +160,7 @@ class ProgressBoard(d2l.HyperParameters):
             plt_lines.append(d2l.plt.plot([p.x for p in v], [p.y for p in v],
                                           linestyle=ls, color=color)[0])
             labels.append(k)
-        axes = self.axes if self.axes else d2l.plt.gca()
+        axes = self.axes or d2l.plt.gca()
         if self.xlim: axes.set_xlim(self.xlim)
         if self.ylim: axes.set_ylim(self.ylim)
         if not self.xlabel: self.xlabel = self.x
@@ -495,9 +495,7 @@ def try_gpu(i=0):
     """Return gpu(i) if exists, otherwise return cpu().
 
     Defined in :numref:`sec_use_gpu`"""
-    if num_gpus() >= i + 1:
-        return gpu(i)
-    return cpu()
+    return gpu(i) if num_gpus() >= i + 1 else cpu()
 
 def try_all_gpus():
     """Return all available GPUs, or [cpu(),] if no GPU exists.
@@ -520,7 +518,7 @@ def init_cnn(module):
     """Initialize weights for CNNs.
 
     Defined in :numref:`sec_lenet`"""
-    if type(module) == nn.Linear or type(module) == nn.Conv2d:
+    if type(module) in [nn.Linear, nn.Conv2d]:
         nn.init.xavier_uniform_(module.weight)
 
 class Residual(nn.Module):
@@ -605,8 +603,12 @@ class TimeMachine(d2l.DataModule):
         super(d2l.TimeMachine, self).__init__()
         self.save_hyperparameters()
         corpus, self.vocab = self.build(self._download())
-        array = d2l.tensor([corpus[i:i+num_steps+1]
-                            for i in range(0, len(corpus)-num_steps-1)])
+        array = d2l.tensor(
+            [
+                corpus[i : i + num_steps + 1]
+                for i in range(len(corpus) - num_steps - 1)
+            ]
+        )
         self.X, self.Y = array[:,:-1], array[:,1:]
 
     def get_dataloader(self, train):
@@ -636,9 +638,11 @@ class Vocab:
         return len(self.idx_to_token)
 
     def __getitem__(self, tokens):
-        if not isinstance(tokens, (list, tuple)):
-            return self.token_to_idx.get(tokens, self.unk)
-        return [self.__getitem__(token) for token in tokens]
+        return (
+            [self.__getitem__(token) for token in tokens]
+            if isinstance(tokens, (list, tuple))
+            else self.token_to_idx.get(tokens, self.unk)
+        )
 
     def to_tokens(self, indices):
         if hasattr(indices, '__len__') and len(indices) > 1:
@@ -1011,16 +1015,16 @@ def masked_softmax(X, valid_lens):
 
     if valid_lens is None:
         return nn.functional.softmax(X, dim=-1)
-    else:
-        shape = X.shape
-        if valid_lens.dim() == 1:
-            valid_lens = torch.repeat_interleave(valid_lens, shape[1])
-        else:
-            valid_lens = valid_lens.reshape(-1)
-        # On the last axis, replace masked elements with a very large negative
-        # value, whose exponentiation outputs 0
-        X = _sequence_mask(X.reshape(-1, shape[-1]), valid_lens, value=-1e6)
-        return nn.functional.softmax(X.reshape(shape), dim=-1)
+    shape = X.shape
+    valid_lens = (
+        torch.repeat_interleave(valid_lens, shape[1])
+        if valid_lens.dim() == 1
+        else valid_lens.reshape(-1)
+    )
+    # On the last axis, replace masked elements with a very large negative
+    # value, whose exponentiation outputs 0
+    X = _sequence_mask(X.reshape(-1, shape[-1]), valid_lens, value=-1e6)
+    return nn.functional.softmax(X.reshape(shape), dim=-1)
 
 class AdditiveAttention(nn.Module):
     """Additive attention.
@@ -1227,8 +1231,12 @@ class TransformerEncoder(d2l.Encoder):
         self.pos_encoding = d2l.PositionalEncoding(num_hiddens, dropout)
         self.blks = nn.Sequential()
         for i in range(num_blks):
-            self.blks.add_module("block"+str(i), TransformerEncoderBlock(
-                num_hiddens, ffn_num_hiddens, num_heads, dropout, use_bias))
+            self.blks.add_module(
+                f"block{str(i)}",
+                TransformerEncoderBlock(
+                    num_hiddens, ffn_num_hiddens, num_heads, dropout, use_bias
+                ),
+            )
 
     def forward(self, X, valid_lens):
         # Since positional encoding values are between -1 and 1, the embedding
@@ -1426,11 +1434,7 @@ def train_batch_ch13(net, X, y, loss, trainer, devices):
     """Train for a minibatch with multiple GPUs (defined in Chapter 13).
 
     Defined in :numref:`sec_image_augmentation`"""
-    if isinstance(X, list):
-        # Required for BERT fine-tuning (to be covered later)
-        X = [x.to(devices[0]) for x in X]
-    else:
-        X = X.to(devices[0])
+    X = [x.to(devices[0]) for x in X] if isinstance(X, list) else X.to(devices[0])
     y = y.to(devices[0])
     net.train()
     trainer.zero_grad()
@@ -1629,8 +1633,7 @@ def offset_boxes(anchors, assigned_bb, eps=1e-6):
     c_assigned_bb = d2l.box_corner_to_center(assigned_bb)
     offset_xy = 10 * (c_assigned_bb[:, :2] - c_anc[:, :2]) / c_anc[:, 2:]
     offset_wh = 5 * d2l.log(eps + c_assigned_bb[:, 2:] / c_anc[:, 2:])
-    offset = d2l.concat([offset_xy, offset_wh], axis=1)
-    return offset
+    return d2l.concat([offset_xy, offset_wh], axis=1)
 
 def multibox_target(anchors, labels):
     """Label anchor boxes using ground-truth bounding boxes.
@@ -1676,8 +1679,7 @@ def offset_inverse(anchors, offset_preds):
     pred_bbox_xy = (offset_preds[:, :2] * anc[:, 2:] / 10) + anc[:, :2]
     pred_bbox_wh = d2l.exp(offset_preds[:, 2:] / 5) * anc[:, 2:]
     pred_bbox = d2l.concat((pred_bbox_xy, pred_bbox_wh), axis=1)
-    predicted_bbox = d2l.box_center_to_corner(pred_bbox)
-    return predicted_bbox
+    return d2l.box_center_to_corner(pred_bbox)
 
 def nms(boxes, scores, iou_threshold):
     """Sort confidence scores of predicted bounding boxes.
@@ -1759,8 +1761,12 @@ class BananasDataset(torch.utils.data.Dataset):
     Defined in :numref:`sec_object-detection-dataset`"""
     def __init__(self, is_train):
         self.features, self.labels = read_data_bananas(is_train)
-        print('read ' + str(len(self.features)) + (f' training examples' if
-              is_train else f' validation examples'))
+        print(
+            (
+                f'read {len(self.features)}'
+                + (' training examples' if is_train else ' validation examples')
+            )
+        )
 
     def __getitem__(self, idx):
         return (self.features[idx].float(), self.labels[idx])
@@ -1791,7 +1797,7 @@ def read_voc_images(voc_dir, is_train=True):
     with open(txt_fname, 'r') as f:
         images = f.read().split()
     features, labels = [], []
-    for i, fname in enumerate(images):
+    for fname in images:
         features.append(torchvision.io.read_image(os.path.join(
             voc_dir, 'JPEGImages', f'{fname}.jpg')))
         labels.append(torchvision.io.read_image(os.path.join(
@@ -1853,7 +1859,7 @@ class VOCSegDataset(torch.utils.data.Dataset):
                          for feature in self.filter(features)]
         self.labels = self.filter(labels)
         self.colormap2label = voc_colormap2label()
-        print('read ' + str(len(self.features)) + ' examples')
+        print(f'read {len(self.features)} examples')
 
     def normalize_image(self, img):
         return self.transform(img.float() / 255)
@@ -1897,7 +1903,7 @@ def read_csv_labels(fname):
         # Skip the file header line (column name)
         lines = f.readlines()[1:]
     tokens = [l.rstrip().split(',') for l in lines]
-    return dict(((name, label) for name, label in tokens))
+    return dict(tokens)
 
 def copyfile(filename, target_dir):
     """Copy a file into a target directory.
@@ -2123,8 +2129,7 @@ class TokenEmbedding:
     def __getitem__(self, tokens):
         indices = [self.token_to_idx.get(token, self.unknown_idx)
                    for token in tokens]
-        vecs = self.idx_to_vec[d2l.tensor(indices)]
-        return vecs
+        return self.idx_to_vec[d2l.tensor(indices)]
 
     def __len__(self):
         return len(self.idx_to_token)
@@ -2189,8 +2194,7 @@ class MaskLM(nn.Module):
         batch_idx = torch.repeat_interleave(batch_idx, num_pred_positions)
         masked_X = X[batch_idx, pred_positions]
         masked_X = masked_X.reshape((batch_size, num_pred_positions, -1))
-        mlm_Y_hat = self.mlp(masked_X)
-        return mlm_Y_hat
+        return self.mlp(masked_X)
 
 class NextSentencePred(nn.Module):
     """The next sentence prediction task of BERT.
@@ -2273,7 +2277,7 @@ def _replace_mlm_tokens(tokens, candidate_pred_positions, num_mlm_preds,
     """Defined in :numref:`sec_bert-dataset`"""
     # For the input of a masked language model, make a new copy of tokens and
     # replace some of them by '<mask>' or random tokens
-    mlm_input_tokens = [token for token in tokens]
+    mlm_input_tokens = list(tokens)
     pred_positions_and_labels = []
     # Shuffle for getting 15% random tokens for prediction in the masked
     # language modeling task
@@ -2285,13 +2289,10 @@ def _replace_mlm_tokens(tokens, candidate_pred_positions, num_mlm_preds,
         # 80% of the time: replace the word with the '<mask>' token
         if random.random() < 0.8:
             masked_token = '<mask>'
+        elif random.random() < 0.5:
+            masked_token = tokens[mlm_pred_position]
         else:
-            # 10% of the time: keep the word unchanged
-            if random.random() < 0.5:
-                masked_token = tokens[mlm_pred_position]
-            # 10% of the time: replace the word with a random word
-            else:
-                masked_token = random.choice(vocab.idx_to_token)
+            masked_token = random.choice(vocab.idx_to_token)
         mlm_input_tokens[mlm_pred_position] = masked_token
         pred_positions_and_labels.append(
             (mlm_pred_position, tokens[mlm_pred_position]))
@@ -2299,14 +2300,9 @@ def _replace_mlm_tokens(tokens, candidate_pred_positions, num_mlm_preds,
 
 def _get_mlm_data_from_tokens(tokens, vocab):
     """Defined in :numref:`subsec_prepare_mlm_data`"""
-    candidate_pred_positions = []
-    # `tokens` is a list of strings
-    for i, token in enumerate(tokens):
-        # Special tokens are not predicted in the masked language modeling
-        # task
-        if token in ['<cls>', '<sep>']:
-            continue
-        candidate_pred_positions.append(i)
+    candidate_pred_positions = [
+        i for i, token in enumerate(tokens) if token not in ['<cls>', '<sep>']
+    ]
     # 15% of random tokens are predicted in the masked language modeling task
     num_mlm_preds = max(1, round(len(tokens) * 0.15))
     mlm_input_tokens, pred_positions_and_labels = _replace_mlm_tokens(
@@ -2499,7 +2495,7 @@ class SNLIDataset(torch.utils.data.Dataset):
         self.premises = self._pad(all_premise_tokens)
         self.hypotheses = self._pad(all_hypothesis_tokens)
         self.labels = torch.tensor(dataset[2])
-        print('read ' + str(len(self.premises)) + ' examples')
+        print(f'read {len(self.premises)} examples')
 
     def _pad(self, lines):
         return torch.tensor([d2l.truncate_pad(
@@ -2641,11 +2637,7 @@ def evaluate_accuracy_gpu(net, data_iter, device=None):
 
     with torch.no_grad():
         for X, y in data_iter:
-            if isinstance(X, list):
-                # Required for BERT Fine-tuning (to be covered later)
-                X = [x.to(device) for x in X]
-            else:
-                X = X.to(device)
+            X = [x.to(device) for x in X] if isinstance(X, list) else X.to(device)
             y = y.to(device)
             metric.add(d2l.accuracy(net(X), y), d2l.size(y))
     return metric[0] / metric[1]
@@ -2656,8 +2648,9 @@ def train_ch6(net, train_iter, test_iter, num_epochs, lr, device):
 
     Defined in :numref:`sec_utils`"""
     def init_weights(m):
-        if type(m) == nn.Linear or type(m) == nn.Conv2d:
+        if type(m) in [nn.Linear, nn.Conv2d]:
             nn.init.xavier_uniform_(m.weight)
+
     net.apply(init_weights)
     print('training on', device)
     net.to(device)
@@ -2812,10 +2805,10 @@ def download(url, folder='../data', sha1_hash=None):
         sha1 = hashlib.sha1()
         with open(fname, 'rb') as f:
             while True:
-                data = f.read(1048576)
-                if not data:
+                if data := f.read(1048576):
+                    sha1.update(data)
+                else:
                     break
-                sha1.update(data)
         if sha1.hexdigest() == sha1_hash:
             return fname
     # Download
@@ -2992,8 +2985,7 @@ class MaskedSoftmaxCELoss(nn.CrossEntropyLoss):
         self.reduction='none'
         unweighted_loss = super(MaskedSoftmaxCELoss, self).forward(
             pred.permute(0, 2, 1), label)
-        weighted_loss = (unweighted_loss * weights).mean(dim=1)
-        return weighted_loss
+        return (unweighted_loss * weights).mean(dim=1)
 
 def train_seq2seq(net, data_iter, lr, num_epochs, tgt_vocab, device):
     """Train a model for sequence to sequence.

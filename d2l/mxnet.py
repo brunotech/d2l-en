@@ -2,7 +2,7 @@ USE_MXNET = True
 USE_PYTORCH = False
 USE_TENSORFLOW = False
 
-DATA_HUB = dict()
+DATA_HUB = {}
 DATA_URL = 'http://d2l-data.s3-accelerate.amazonaws.com/'
 
 from mxnet import autograd, context, gluon, image, init, np, npx
@@ -153,7 +153,7 @@ class ProgressBoard(d2l.HyperParameters):
             plt_lines.append(d2l.plt.plot([p.x for p in v], [p.y for p in v],
                                           linestyle=ls, color=color)[0])
             labels.append(k)
-        axes = self.axes if self.axes else d2l.plt.gca()
+        axes = self.axes or d2l.plt.gca()
         if self.xlim: axes.set_xlim(self.xlim)
         if self.ylim: axes.set_ylim(self.ylim)
         if not self.xlabel: self.xlabel = self.x
@@ -512,9 +512,7 @@ def try_gpu(i=0):
     """Return gpu(i) if exists, otherwise return cpu().
 
     Defined in :numref:`sec_use_gpu`"""
-    if num_gpus() >= i + 1:
-        return gpu(i)
-    return cpu()
+    return gpu(i) if num_gpus() >= i + 1 else cpu()
 
 def try_all_gpus():
     """Return all available GPUs, or [cpu(),] if no GPU exists.
@@ -615,8 +613,12 @@ class TimeMachine(d2l.DataModule):
         super(d2l.TimeMachine, self).__init__()
         self.save_hyperparameters()
         corpus, self.vocab = self.build(self._download())
-        array = d2l.tensor([corpus[i:i+num_steps+1]
-                            for i in range(0, len(corpus)-num_steps-1)])
+        array = d2l.tensor(
+            [
+                corpus[i : i + num_steps + 1]
+                for i in range(len(corpus) - num_steps - 1)
+            ]
+        )
         self.X, self.Y = array[:,:-1], array[:,1:]
 
     def get_dataloader(self, train):
@@ -646,9 +648,11 @@ class Vocab:
         return len(self.idx_to_token)
 
     def __getitem__(self, tokens):
-        if not isinstance(tokens, (list, tuple)):
-            return self.token_to_idx.get(tokens, self.unk)
-        return [self.__getitem__(token) for token in tokens]
+        return (
+            [self.__getitem__(token) for token in tokens]
+            if isinstance(tokens, (list, tuple))
+            else self.token_to_idx.get(tokens, self.unk)
+        )
 
     def to_tokens(self, indices):
         if hasattr(indices, '__len__') and len(indices) > 1:
@@ -1004,20 +1008,19 @@ def masked_softmax(X, valid_lens):
     """Perform softmax operation by masking elements on the last axis.
 
     Defined in :numref:`sec_attention-scoring-functions`"""
-    # X: 3D tensor, valid_lens: 1D or 2D tensor
     if valid_lens is None:
         return npx.softmax(X)
-    else:
-        shape = X.shape
-        if valid_lens.ndim == 1:
-            valid_lens = valid_lens.repeat(shape[1])
-        else:
-            valid_lens = valid_lens.reshape(-1)
-        # On the last axis, replace masked elements with a very large negative
-        # value, whose exponentiation outputs 0
-        X = npx.sequence_mask(X.reshape(-1, shape[-1]), valid_lens, True,
-                              value=-1e6, axis=1)
-        return npx.softmax(X).reshape(shape)
+    shape = X.shape
+    valid_lens = (
+        valid_lens.repeat(shape[1])
+        if valid_lens.ndim == 1
+        else valid_lens.reshape(-1)
+    )
+    # On the last axis, replace masked elements with a very large negative
+    # value, whose exponentiation outputs 0
+    X = npx.sequence_mask(X.reshape(-1, shape[-1]), valid_lens, True,
+                          value=-1e6, axis=1)
+    return npx.softmax(X).reshape(shape)
 
 class AdditiveAttention(nn.Block):
     """Additive attention.
@@ -1448,7 +1451,7 @@ def train_batch_ch13(net, features, labels, loss, trainer, devices,
     # The `True` flag allows parameters with stale gradients, which is useful
     # later (e.g., in fine-tuning BERT)
     trainer.step(labels.shape[0], ignore_stale_grad=True)
-    train_loss_sum = sum([float(l.sum()) for l in ls])
+    train_loss_sum = sum(float(l.sum()) for l in ls)
     train_acc_sum = sum(d2l.accuracy(pred_shard, y_shard)
                         for pred_shard, y_shard in zip(pred_shards, y_shards))
     return train_loss_sum, train_acc_sum
@@ -1638,8 +1641,7 @@ def offset_boxes(anchors, assigned_bb, eps=1e-6):
     c_assigned_bb = d2l.box_corner_to_center(assigned_bb)
     offset_xy = 10 * (c_assigned_bb[:, :2] - c_anc[:, :2]) / c_anc[:, 2:]
     offset_wh = 5 * d2l.log(eps + c_assigned_bb[:, 2:] / c_anc[:, 2:])
-    offset = d2l.concat([offset_xy, offset_wh], axis=1)
-    return offset
+    return d2l.concat([offset_xy, offset_wh], axis=1)
 
 def multibox_target(anchors, labels):
     """Label anchor boxes using ground-truth bounding boxes.
@@ -1684,8 +1686,7 @@ def offset_inverse(anchors, offset_preds):
     pred_bbox_xy = (offset_preds[:, :2] * anc[:, 2:] / 10) + anc[:, :2]
     pred_bbox_wh = d2l.exp(offset_preds[:, 2:] / 5) * anc[:, 2:]
     pred_bbox = d2l.concat((pred_bbox_xy, pred_bbox_wh), axis=1)
-    predicted_bbox = d2l.box_center_to_corner(pred_bbox)
-    return predicted_bbox
+    return d2l.box_center_to_corner(pred_bbox)
 
 def nms(boxes, scores, iou_threshold):
     """Sort confidence scores of predicted bounding boxes.
@@ -1767,8 +1768,12 @@ class BananasDataset(gluon.data.Dataset):
     Defined in :numref:`sec_object-detection-dataset`"""
     def __init__(self, is_train):
         self.features, self.labels = read_data_bananas(is_train)
-        print('read ' + str(len(self.features)) + (f' training examples' if
-              is_train else f' validation examples'))
+        print(
+            (
+                f'read {len(self.features)}'
+                + (' training examples' if is_train else ' validation examples')
+            )
+        )
 
     def __getitem__(self, idx):
         return (self.features[idx].astype('float32').transpose(2, 0, 1),
@@ -1799,7 +1804,7 @@ def read_voc_images(voc_dir, is_train=True):
     with open(txt_fname, 'r') as f:
         images = f.read().split()
     features, labels = [], []
-    for i, fname in enumerate(images):
+    for fname in images:
         features.append(image.imread(os.path.join(
             voc_dir, 'JPEGImages', f'{fname}.jpg')))
         labels.append(image.imread(os.path.join(
@@ -1858,7 +1863,7 @@ class VOCSegDataset(gluon.data.Dataset):
                          for feature in self.filter(features)]
         self.labels = self.filter(labels)
         self.colormap2label = voc_colormap2label()
-        print('read ' + str(len(self.features)) + ' examples')
+        print(f'read {len(self.features)} examples')
 
     def normalize_image(self, img):
         return (img.astype('float32') / 255 - self.rgb_mean) / self.rgb_std
@@ -1903,7 +1908,7 @@ def read_csv_labels(fname):
         # Skip the file header line (column name)
         lines = f.readlines()[1:]
     tokens = [l.rstrip().split(',') for l in lines]
-    return dict(((name, label) for name, label in tokens))
+    return dict(tokens)
 
 def copyfile(filename, target_dir):
     """Copy a file into a target directory.
@@ -2113,8 +2118,7 @@ class TokenEmbedding:
     def __getitem__(self, tokens):
         indices = [self.token_to_idx.get(token, self.unknown_idx)
                    for token in tokens]
-        vecs = self.idx_to_vec[d2l.tensor(indices)]
-        return vecs
+        return self.idx_to_vec[d2l.tensor(indices)]
 
     def __len__(self):
         return len(self.idx_to_token)
@@ -2180,8 +2184,7 @@ class MaskLM(nn.Block):
         batch_idx = np.repeat(batch_idx, num_pred_positions)
         masked_X = X[batch_idx, pred_positions]
         masked_X = masked_X.reshape((batch_size, num_pred_positions, -1))
-        mlm_Y_hat = self.mlp(masked_X)
-        return mlm_Y_hat
+        return self.mlp(masked_X)
 
 class NextSentencePred(nn.Block):
     """The next sentence prediction task of BERT.
@@ -2262,7 +2265,7 @@ def _replace_mlm_tokens(tokens, candidate_pred_positions, num_mlm_preds,
     """Defined in :numref:`sec_bert-dataset`"""
     # For the input of a masked language model, make a new copy of tokens and
     # replace some of them by '<mask>' or random tokens
-    mlm_input_tokens = [token for token in tokens]
+    mlm_input_tokens = list(tokens)
     pred_positions_and_labels = []
     # Shuffle for getting 15% random tokens for prediction in the masked
     # language modeling task
@@ -2274,13 +2277,10 @@ def _replace_mlm_tokens(tokens, candidate_pred_positions, num_mlm_preds,
         # 80% of the time: replace the word with the '<mask>' token
         if random.random() < 0.8:
             masked_token = '<mask>'
+        elif random.random() < 0.5:
+            masked_token = tokens[mlm_pred_position]
         else:
-            # 10% of the time: keep the word unchanged
-            if random.random() < 0.5:
-                masked_token = tokens[mlm_pred_position]
-            # 10% of the time: replace the word with a random word
-            else:
-                masked_token = random.choice(vocab.idx_to_token)
+            masked_token = random.choice(vocab.idx_to_token)
         mlm_input_tokens[mlm_pred_position] = masked_token
         pred_positions_and_labels.append(
             (mlm_pred_position, tokens[mlm_pred_position]))
@@ -2288,14 +2288,9 @@ def _replace_mlm_tokens(tokens, candidate_pred_positions, num_mlm_preds,
 
 def _get_mlm_data_from_tokens(tokens, vocab):
     """Defined in :numref:`subsec_prepare_mlm_data`"""
-    candidate_pred_positions = []
-    # `tokens` is a list of strings
-    for i, token in enumerate(tokens):
-        # Special tokens are not predicted in the masked language modeling
-        # task
-        if token in ['<cls>', '<sep>']:
-            continue
-        candidate_pred_positions.append(i)
+    candidate_pred_positions = [
+        i for i, token in enumerate(tokens) if token not in ['<cls>', '<sep>']
+    ]
     # 15% of random tokens are predicted in the masked language modeling task
     num_mlm_preds = max(1, round(len(tokens) * 0.15))
     mlm_input_tokens, pred_positions_and_labels = _replace_mlm_tokens(
@@ -2497,7 +2492,7 @@ class SNLIDataset(gluon.data.Dataset):
         self.premises = self._pad(all_premise_tokens)
         self.hypotheses = self._pad(all_hypothesis_tokens)
         self.labels = np.array(dataset[2])
-        print('read ' + str(len(self.premises)) + ' examples')
+        print(f'read {len(self.premises)} examples')
 
     def _pad(self, lines):
         return np.array([d2l.truncate_pad(
@@ -2575,8 +2570,10 @@ def split_data_ml100k(data, num_users, num_items,
         train_data = pd.DataFrame(train_data)
         test_data = pd.DataFrame(test_data)
     else:
-        mask = [True if x == 1 else False for x in np.random.uniform(
-            0, 1, (len(data))) < 1 - test_ratio]
+        mask = [
+            x == 1
+            for x in np.random.uniform(0, 1, (len(data))) < 1 - test_ratio
+        ]
         neg_mask = [not x for x in mask]
         train_data, test_data = data[mask], data[neg_mask]
     return train_data, test_data
@@ -2626,21 +2623,19 @@ def train_recsys_rating(net, train_iter, test_iter, loss, trainer, num_epochs,
         metric, l = d2l.Accumulator(3), 0.
         for i, values in enumerate(train_iter):
             timer.start()
-            input_data = []
             values = values if isinstance(values, list) else [values]
-            for v in values:
-                input_data.append(gluon.utils.split_and_load(v, devices))
+            input_data = [gluon.utils.split_and_load(v, devices) for v in values]
             train_feat = input_data[:-1] if len(values) > 1 else input_data
             train_label = input_data[-1]
             with autograd.record():
                 preds = [net(*t) for t in zip(*train_feat)]
                 ls = [loss(p, s) for p, s in zip(preds, train_label)]
             [l.backward() for l in ls]
-            l += sum([l.asnumpy() for l in ls]).mean() / len(devices)
+            l += sum(l.asnumpy() for l in ls).mean() / len(devices)
             trainer.step(values[0].shape[0])
             metric.add(l, values[0].shape[0], values[0].size)
             timer.stop()
-        if len(kwargs) > 0:  # It will be used in section AutoRec
+        if kwargs:  # It will be used in section AutoRec
             test_rmse = evaluator(net, test_iter, kwargs['inter_mat'],
                                   devices)
         else:
@@ -2658,8 +2653,7 @@ class BPRLoss(gluon.loss.Loss):
 
     def forward(self, positive, negative):
         distances = positive - negative
-        loss = - np.sum(np.log(npx.sigmoid(distances)), 0, keepdims=True)
-        return loss
+        return - np.sum(np.log(npx.sigmoid(distances)), 0, keepdims=True)
 
 class HingeLossbRec(gluon.loss.Loss):
     def __init__(self, weight=None, batch_axis=0, **kwargs):
@@ -2668,8 +2662,7 @@ class HingeLossbRec(gluon.loss.Loss):
 
     def forward(self, positive, negative, margin=1):
         distances = positive - negative
-        loss = np.sum(np.maximum(- distances + margin, 0))
-        return loss
+        return np.sum(np.maximum(- distances + margin, 0))
 
 def hit_and_auc(rankedlist, test_matrix, k):
     hits_k = [(idx, val) for idx, val in enumerate(rankedlist[:k])
@@ -2677,13 +2670,13 @@ def hit_and_auc(rankedlist, test_matrix, k):
     hits_all = [(idx, val) for idx, val in enumerate(rankedlist)
                 if val in set(test_matrix)]
     max = len(rankedlist) - 1
-    auc = 1.0 * (max - hits_all[0][0]) / max if len(hits_all) > 0 else 0
+    auc = 1.0 * (max - hits_all[0][0]) / max if hits_all else 0
     return len(hits_k), auc
 
 def evaluate_ranking(net, test_input, seq, candidates, num_users, num_items,
                      devices):
     ranked_list, ranked_items, hit_rate, auc = {}, {}, [], []
-    all_items = set([i for i in range(num_users)])
+    all_items = set(list(range(num_users)))
     for u in range(num_users):
         neg_items = list(all_items - set(candidates[int(u)]))
         user_ids, item_ids, x, scores = [], [], [], []
@@ -2696,7 +2689,7 @@ def evaluate_ranking(net, test_input, seq, candidates, num_users, num_items,
         test_data_iter = gluon.data.DataLoader(
             gluon.data.ArrayDataset(*x), shuffle=False, last_batch="keep",
             batch_size=1024)
-        for index, values in enumerate(test_data_iter):
+        for values in test_data_iter:
             x = [gluon.utils.split_and_load(v, devices, even_split=False)
                  for v in values]
             scores.extend([list(net(*t).asnumpy()) for t in zip(*x)])
@@ -2717,17 +2710,15 @@ def train_ranking(net, train_iter, test_iter, loss, trainer, test_seq_iter,
                             legend=['test hit rate', 'test AUC'])
     for epoch in range(num_epochs):
         metric, l = d2l.Accumulator(3), 0.
-        for i, values in enumerate(train_iter):
-            input_data = []
-            for v in values:
-                input_data.append(gluon.utils.split_and_load(v, devices))
+        for values in train_iter:
+            input_data = [gluon.utils.split_and_load(v, devices) for v in values]
             with autograd.record():
                 p_pos = [net(*t) for t in zip(*input_data[:-1])]
                 p_neg = [net(*t) for t in zip(*input_data[:-2],
                                               input_data[-1])]
                 ls = [loss(p, n) for p, n in zip(p_pos, p_neg)]
             [l.backward(retain_graph=False) for l in ls]
-            l += sum([l.asnumpy() for l in ls]).mean()/len(devices)
+            l += sum(l.asnumpy() for l in ls).mean() / len(devices)
             trainer.step(values[0].shape[0])
             metric.add(l, values[0].shape[0], values[0].size)
             timer.stop()
@@ -2754,13 +2745,12 @@ class CTRDataset(gluon.data.Dataset):
         self.field_dims = np.zeros(self.NUM_FEATS, dtype=np.int64)
         with open(data_path) as f:
             for line in f:
-                instance = {}
                 values = line.rstrip('\n').split('\t')
                 if len(values) != self.NUM_FEATS + 1:
                     continue
                 label = np.float32([0, 0])
                 label[int(values[0])] = 1
-                instance['y'] = [np.float32(values[0])]
+                instance = {'y': [np.float32(values[0])]}
                 for i in range(1, self.NUM_FEATS + 1):
                     feat_cnts[i][values[i]] += 1
                     instance.setdefault('x', []).append(values[i])
@@ -3058,10 +3048,10 @@ def download(url, folder='../data', sha1_hash=None):
         sha1 = hashlib.sha1()
         with open(fname, 'rb') as f:
             while True:
-                data = f.read(1048576)
-                if not data:
+                if data := f.read(1048576):
+                    sha1.update(data)
+                else:
                     break
-                sha1.update(data)
         if sha1.hexdigest() == sha1_hash:
             return fname
     # Download
